@@ -1,6 +1,7 @@
 const chalk = require('chalk');
 const fs = require('fs');
 const path = require('path');
+const config = require('../config');
 
 function handleCommands(bot) {
     const commandsPath = path.join(__dirname, '..', 'commands');
@@ -19,9 +20,9 @@ function handleCommands(bot) {
             try {
                 const command = require(path.join(folderPath, file));
                 if (command.name && typeof command.execute === 'function') {
-                    const commandKey = `${folder}/${file}`
+                    const commandKey = `${folder}/${file}`;
                     console.log(chalk.yellowBright.bold('COMMAND  '), chalk.white('-'), chalk.gray(`Successfully loaded command named`), chalk.greenBright(file));
-                    commands.set(command.name.toLowerCase(), command.execute);
+                    commands.set(command.name.toLowerCase(), command);
                     loadedCommands.push(commandKey);
                 }
             } catch (err) {
@@ -30,21 +31,37 @@ function handleCommands(bot) {
         }
     }
 
-    bot.on('message', (msg) => {
+    bot.on('message', async (msg) => {
         if (!msg.text || !msg.text.startsWith('/')) return;
 
         const chatId = msg.chat.id;
-        const commandName = msg.text.split(' ')[0].slice(1).toLowerCase();
+        const userId = msg.from.id;
+        const text = msg.text.split(' ')[0];
+        const commandName = text.slice(1).split('@')[0].toLowerCase();
 
-        if (commands.has(commandName)) {
-            try {
-                commands.get(commandName)(bot, msg, { reply_to_message_id: msg.message_id });
-            } catch (error) {
-                bot.sendMessage(chatId, 'Terjadi kesalahan saat menjalankan perintah.', { reply_to_message_id: msg.message_id });
-                console.log(chalk.yellowBright.bold('COMMAND '), chalk.white('-'), chalk.bgRed('[ERROR]'), chalk.gray.bgWhite(error));
-            }
-        } else {
-            bot.sendMessage(chatId, `Perintah /${commandName} tidak dikenali.`, { reply_to_message_id: msg.message_id });
+        const command = commands.get(commandName);
+        if (!command) {
+            const sentMsg = await bot.sendMessage(chatId, 'Sepertinya tidak ada perintah yang kamu berikan.', { reply_to_message_id: msg.message_id });
+            setTimeout(() => {
+                bot.deleteMessage(chatId, sentMsg.message_id).catch(() => { });
+            }, 10000); return;
+        }
+
+        if (command.isAdmin && userId !== config.client.owner) {
+            const ownerMsg = await bot.sendMessage(chatId, 'Sepertinya perintah yang kamu jalankan hanya bisa digunakan oleh owner bot ini.', { reply_to_message_id: msg.message_id });
+            setTimeout(() => {
+                bot.deleteMessage(chatId, ownerMsg.message_id).catch(() => { });
+            }, 10000); return;
+        }
+
+        try {
+            await command.execute(bot, msg, { parse_mode: 'HTML', reply_to_message_id: msg.message_id });
+        } catch (error) {
+            console.log(chalk.yellowBright.bold('COMMAND  '), chalk.white('-'), chalk.bgRed('[ERROR]'), chalk.gray(`${command.name} - ${error.message}`));
+            const errorMsg = await bot.sendMessage(chatId, 'Terjadi kesalahan saat mencoba menjalankan perintah yang kamu berikan.', { reply_to_message_id: msg.message_id });
+             setTimeout(() => {
+                bot.deleteMessage(chatId, errorMsg.message_id).catch(() => { });
+            }, 10000); return;
         }
     });
 
